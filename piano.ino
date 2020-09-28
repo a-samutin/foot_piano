@@ -33,7 +33,7 @@ void NoteOff(uint8_t note)
   Serial.write(0);
 }
 
-void  instrumenChange(uint8_t instrument)
+void  InstrumenChange(uint8_t instrument)
 {
   Serial.write(0xC0);
   Serial.write(instrument);
@@ -183,6 +183,55 @@ void StopAllPlayung(uint8_t *playingNote)
     }
   }
 }
+
+void DoProgramming(uint16_t keys)
+{
+  switch (keys){
+    case 0x001:  //bC
+      sm=SM_B-36;
+      break;   
+    case 0x004:  //bD
+      sm=SM_B-24;
+      break;
+    case 0x010: //bE
+      sm=SM_B-12;
+      break;
+    case 0x020: //bF
+      sm=SM_B;
+      break;
+    case 0x080: //bG  
+      sm=SM_B+12;
+      break;
+    case 0x200: //bA
+      sm=SM_B+24;
+      break;
+    case 0x800: //bB
+      sm=SM_B+36;
+      break;
+    // блок пресетов
+    case 0x002: //bCd
+      sm=SM_B-12;
+      InstrumenChange(19); //орган Church
+      break;
+    case 0x008: //bDd
+      sm=SM_B-12;
+      InstrumenChange(18); //draw bar Organ
+      break;  
+    case 0x040: //bFd
+      sm=SM_B-12;
+      InstrumenChange(32); // бас акус
+      break; 
+    case 0x100: //bGd
+      sm=SM_B-12;
+      InstrumenChange(42); //виолончель
+      break;  
+    case 0x400: //bAd
+      sm=SM_B-12;
+      InstrumenChange(71); //кларнет
+      break;          
+  }
+}
+
 //обработчик клавишь
 void Do_keys()
 {
@@ -190,12 +239,31 @@ void Do_keys()
   static uint16_t prevKeys = 0; //Предыдушее состояние клавишь
   static uint8_t  playingNote[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   static uint8_t  programMode = 0;
+  static uint16_t progLEDcnt = 0 ;
 
   uint8_t newMode = GetHoldMode();
   uint16_t keys = DoKeyDebouncing(GetKeys());
   if (ModeSwtchCounter)
   { //для сброса debouncing счетчиков при переключении режимов
     --ModeSwtchCounter;
+    return;
+  }
+
+  if (programMode)
+  {
+    ++progLEDcnt;
+    progLEDcnt &=0x1F; //период мигания 512 мСек
+    // Mигаем светодиодом power
+    if (progLEDcnt < 350) 
+      PowerLED(LOW);
+    else{
+      PowerLED(HIGH);
+    }   
+    if (keys) {
+      DoProgramming(keys);
+      programMode = 0; 
+      PowerLED(HIGH);     
+    }
     return;
   }
   if (newMode != mode)
@@ -208,7 +276,7 @@ void Do_keys()
       mode = newMode;
     return;
   }
-  if (!mode)
+  if (mode == 0)
   { //В 1-м режиме (mode ==0) проверяем если есть отпущенные но играющие ноты
     uint16_t k = keys;
     for (int i = 1; i <= 16; i++) //перебираем все клавиши
@@ -224,7 +292,7 @@ void Do_keys()
 
   if (keys == prevKeys) return;
   prevKeys = keys;
-  if (mode)
+  if (mode == 1)
   { // режим 2
     for (int i = 1; i <= 16; i++) //перебираем все клавиши
     {
@@ -274,7 +342,7 @@ void setup() {
   TIMSK0 |= _BV(OCIE0A);
 
   sm = SM_B - 12;  // рок орган по умолчанию
-  instrumenChange(19);
+  InstrumenChange(19);
   PowerLED(HIGH); // горит как питание
 
 
