@@ -2,50 +2,80 @@
 #define OFF_DELAY 150   //задержка звучания в msec (max 255) после отпусканиия в Режиме 1 
 #define HOLD_DEBOUNCING_DELAY 40  //задержка в msec (max 255) для устранения дребезга педли HOLD
 #define KEY_DEBOUNCING_DELAY 40  //задержка в msec (max 255) для устранения дребезга клавиши
-volatile uint8_t  mode = 0; //текущи режим 0-1й, 1 - 2й
+#define PROG_DELAY 1500 //Время удержания Hold в mSec для входа в программирование
+
 //Здесь записываем назначение пинов на клавиши. Для аналоговых использовать номера. Вместо "А0"-14, вместо "A1"-15 итд
 volatile uint8_t keyPins[] = {4, 3, 5, 2, 6, 7, 15, 8, 14, 9, 17, 16};
 #define S_L 11  // светодиод питание, программирование
-#define S_H 13//10  // светодиод холд
+#define S_H 10  // светодиод холд
 #define B_H 19  // Hold пин (A5). Переключения режимов, и программирование при долгом удержании  
-#define PROG_DELAY 1500 //Время удержания Hold в mSec для входа в программирование
+
 #define SM_B  59  //Базовое смещение
+
+volatile uint8_t  mode = 0; //текущи режим 0-1й, 1 - 2й
 volatile uint8_t sm ; //Текущее смещение
+
+//#define DEBUG     //отладочный режим если раскомментировать
+
 void NoteOn(uint8_t note)
 {
+#ifdef DEBUG
   //Для отладки выводим сообщени в сериал
-  //В рабочей версии заменить на МИДИ комманды
-//  Serial.print("On  ");
-//  Serial.println(note);
+  Serial.print("On  ");
+  Serial.println(note);
+#else
   Serial.write(0x90);
   Serial.write(note + sm);
   Serial.write(70);
+#endif
 }
 
 void NoteOff(uint8_t note)
 {
+#ifdef DEBUG
   //Для отладки выводим сообщение в сериал
-  //В рабочей версии заменить на МИДИ комманды
-//  Serial.print("Off ");
- // Serial.println(note);
+  Serial.print("Off ");
+  Serial.println(note);
+#else
   Serial.write(0x80);
   Serial.write(note + sm);
   Serial.write(0);
+#endif
+
 }
 
 void  InstrumenChange(uint8_t instrument)
 {
+#ifdef DEBUG
+  Serial.println((String)"New instr " + instrument);
+#else
   Serial.write(0xC0);
   Serial.write(instrument);
+#endif
 }
 
 void inline PowerLED(uint8_t state)
 {
+#ifdef DEBUG
+  static uint8_t st = 0x10;
+  if (st != state) {
+    st = state;
+    //  Serial.println((String)"PowerLED " + state);
+  }
+  digitalWrite(13, state);
+#endif
   digitalWrite(S_L, state);
 }
 
 void inline HoldLed(uint8_t state)
 {
+#ifdef DEBUG
+  static uint8_t st = 0x10;
+  if (st != state) {
+    st = state;
+    Serial.println((String)"HoldLED " + state);
+  }
+#endif
   digitalWrite(S_H, state);
 }
 
@@ -71,19 +101,12 @@ void InitInput()
 // не забудьте про инвертирование если используется замыкание пинов на землю
 uint16_t GetKeys()
 {
-  /*
-    //Читаем порты B, C, D целиком для ускорения
-    uint8_t  d = PIND;
-    uint16_t b = PINB;
-    uint16_t c = PINC;
-    return ~((d >> 2) | ((b & 0x1F) << 6) | ((c & 0x1F)) << 11);
-  */
   uint16_t ret = 0;
   uint16_t st;
   for (int i = NumberOfKeys - 1; i >= 0 ; i--)
   {
     ret <<= 1;
-    st = digitalRead(keyPins[i]); 
+    st = digitalRead(keyPins[i]);
     ret |= (~st) & 1;
   }
   return ret;
@@ -148,25 +171,28 @@ uint8_t GetHoldMode ()
   static uint8_t currentMode = 0;
   static uint16_t holdCnt = 0;
   uint8_t state = DoHoldPedalDebouncing(GetHoldPedal());
+  static uint8_t waitForRelease = 0;
 
-  if (state)
+  if (state && !waitForRelease)
   { //педаль нажата
     ++holdCnt;
-    return currentMode;
+    if (holdCnt >= PROG_DELAY)
+    {
+      //Педаль нажата уже долго
+      //включаем режим программирования
+      waitForRelease = 1;
+      return PROG_MODE;
+    }
   }
   //педать отпущена
-  if (holdCnt)
-  {
- //   if (holdCnt < PROG_DELAY) //ToDo раскоментировать когда будет сделано прогр
-    { // короткое нажатие. Переключаем режимы    
+  if (state == 0) {
+    waitForRelease = 0;
+    if (holdCnt && holdCnt < PROG_DELAY)
+    { // короткое нажатие. Переключаем режимы
       currentMode = !currentMode;
       HoldLed(currentMode);
-      holdCnt = 0;     
-      return currentMode;
     }
-    //долгое нажатие
-    holdCnt = 0;  
-    return PROG_MODE;
+    holdCnt = 0;
   }
   return currentMode;
 }
@@ -186,64 +212,67 @@ void StopAllPlayung(uint8_t *playingNote)
 
 void DoProgramming(uint16_t keys)
 {
-  switch (keys){
+  switch (keys) {
     case 0x001:  //bC
-      sm=SM_B-36;
-      break;   
+      sm = SM_B - 36;
+      break;
     case 0x004:  //bD
-      sm=SM_B-24;
+      sm = SM_B - 24;
       break;
     case 0x010: //bE
-      sm=SM_B-12;
+      sm = SM_B - 12;
       break;
     case 0x020: //bF
-      sm=SM_B;
+      sm = SM_B;
       break;
-    case 0x080: //bG  
-      sm=SM_B+12;
+    case 0x080: //bG
+      sm = SM_B + 12;
       break;
     case 0x200: //bA
-      sm=SM_B+24;
+      sm = SM_B + 24;
       break;
     case 0x800: //bB
-      sm=SM_B+36;
+      sm = SM_B + 36;
       break;
     // блок пресетов
     case 0x002: //bCd
-      sm=SM_B-12;
+      sm = SM_B - 12;
       InstrumenChange(19); //орган Church
       break;
     case 0x008: //bDd
-      sm=SM_B-12;
+      sm = SM_B - 12;
       InstrumenChange(18); //draw bar Organ
-      break;  
+      break;
     case 0x040: //bFd
-      sm=SM_B-12;
+      sm = SM_B - 12;
       InstrumenChange(32); // бас акус
-      break; 
+      break;
     case 0x100: //bGd
-      sm=SM_B-12;
+      sm = SM_B - 12;
       InstrumenChange(42); //виолончель
-      break;  
+      break;
     case 0x400: //bAd
-      sm=SM_B-12;
+      sm = SM_B - 12;
       InstrumenChange(71); //кларнет
-      break;          
+      break;
   }
+#ifdef DEBUG
+  if (keys) Serial.println((String)"New sm=" + sm);
+#endif
 }
 
 //обработчик клавишь
 void Do_keys()
 {
-  static uint8_t ModeSwtchCounter = 0;
+  static uint8_t  ModeSwtchCounter = 0;
   static uint16_t prevKeys = 0; //Предыдушее состояние клавишь
   static uint8_t  playingNote[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   static uint8_t  programMode = 0;
-  static uint16_t progLEDcnt = 0 ;
+  static uint8_t  progLEDcnt = 0 ;
 
   uint8_t newMode = GetHoldMode();
   uint16_t keys = DoKeyDebouncing(GetKeys());
-  if (ModeSwtchCounter)
+  if (keys && ModeSwtchCounter)
   { //для сброса debouncing счетчиков при переключении режимов
     --ModeSwtchCounter;
     return;
@@ -252,17 +281,16 @@ void Do_keys()
   if (programMode)
   {
     ++progLEDcnt;
-    progLEDcnt &=0x1F; //период мигания 512 мСек
     // Mигаем светодиодом power
-    if (progLEDcnt < 350) 
-      PowerLED(LOW);
-    else{
-      PowerLED(HIGH);
-    }   
+    if (progLEDcnt <  190) PowerLED(LOW);
+    else PowerLED(HIGH);
+
     if (keys) {
       DoProgramming(keys);
-      programMode = 0; 
-      PowerLED(HIGH);     
+      programMode = 0;
+      progLEDcnt = 0;
+      PowerLED(HIGH);
+      ModeSwtchCounter = 0xFF;
     }
     return;
   }
@@ -331,8 +359,13 @@ ISR (TIMER0_COMPA_vect)
 }
 
 void setup() {
-
-  Serial.begin(31250);  //поменять на скорость для МИДИ после проверки
+#ifdef DEBUG
+  Serial.begin(115200);  //скорость для отладки
+  Serial.print("Setup..");
+#else
+  Serial.begin(31250);  //скорость для МИДИ
+#endif
+  //Инициализируем пины
   InitInput();
   //Настраиваем таймер0 на прерывание по совпадению
   //Раз в 1 msec
@@ -341,16 +374,17 @@ void setup() {
   OCR0A = 0xAF;
   TIMSK0 |= _BV(OCIE0A);
 
-  sm = SM_B - 12;  // рок орган по умолчанию
-  InstrumenChange(19);
+  sm = SM_B - 12;
+  InstrumenChange(19); // рок орган по умолчанию
   PowerLED(HIGH); // горит как питание
-
-
+#ifdef DEBUG
+  Serial.println("done");
+#endif
 }
 
 void loop() {
 
-
+#ifndef DEBUG
   //Heart Beat
   digitalWrite(13, 1);
   delay(100);
@@ -360,7 +394,7 @@ void loop() {
   delay(100);
   digitalWrite(13, 0);
   delay(800);
+#endif
 
-  ;
 
 }
